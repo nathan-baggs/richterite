@@ -1,0 +1,13 @@
+LIBRARY winmm
+EXPORTS
+   joyGetNumDevs       @1
+   joyGetPosEx         @2
+   joyGetDevCapsA      @3
+   midiInStart         @4
+   midiInOpen          @5
+   midiInGetNumDevs    @6
+   midiInClose         @7
+   midiInGetDevCapsA   @8
+   timeGetTime         @9
+   timeBeginPeriod     @10
+   timeEndPeriod       @11
