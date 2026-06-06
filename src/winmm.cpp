@@ -1,3 +1,5 @@
+#include <cstring>
+
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
@@ -16,6 +18,20 @@ using MidiInGetDevCapsAFn = ::MMRESULT(WINAPI *)(::UINT_PTR, ::LPMIDIINCAPSA, ::
 using TimeGetTimeFn = ::DWORD(WINAPI *)();
 using TimeBeginPeriodFn = ::MMRESULT(WINAPI *)(::UINT);
 using TimeEndPeriodFn = ::MMRESULT(WINAPI *)(::UINT);
+
+namespace
+{
+
+auto patch() -> void
+{
+    static auto *patch_addr = reinterpret_cast<void *>(0x0044793a);
+    const auto auto_prot = richterite::AutoProtect{reinterpret_cast<void *>(patch_addr), 6, PAGE_EXECUTE_READWRITE};
+
+    std::memset(patch_addr, 0x90, 6);
+
+    richterite::log("patch applied at {}", patch_addr);
+}
+}
 
 extern "C"
 {
@@ -147,6 +163,8 @@ __declspec(dllexport) ::MMRESULT WINAPI timeEndPeriod(::UINT uPeriod)
     if (fdwReason == DLL_PROCESS_ATTACH)
     {
         richterite::log("winmm.dll loaded");
+
+        patch();
     }
 
     return 1;

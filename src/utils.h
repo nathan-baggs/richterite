@@ -58,4 +58,26 @@ auto ensure(bool cond, std::format_string<T...> fmt, T &&...args) -> void
     }
 }
 
+struct AutoProtect
+{
+    AutoProtect(void *addr, std::size_t size, ::DWORD new_prot)
+        : addr(addr)
+        , size(size)
+    {
+        if (!::VirtualProtect(addr, size, new_prot, &old_prot))
+        {
+            die("VirtualProtect failed: {}", ::GetLastError());
+        }
+    }
+
+    ~AutoProtect()
+    {
+        ::VirtualProtect(addr, size, old_prot, &old_prot);
+    }
+
+    void *addr;
+    std::size_t size;
+    ::DWORD old_prot;
+};
+
 }
