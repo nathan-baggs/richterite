@@ -133,34 +133,17 @@ __declspec(dllexport) ::MMRESULT WINAPI midiInGetDevCapsA(::UINT_PTR uDeviceID, 
 
 __declspec(dllexport) ::DWORD WINAPI timeGetTime(void)
 {
-    static const auto *glString_addr = reinterpret_cast<std::uintptr_t *>(0x011733f0);
-    richterite::log("timeGetTime {:x}", *glString_addr);
-
     static const auto orig_func = []
     {
         const auto lib = ::LoadLibraryA("C:\\Windows\\System32\\winmm.dll");
         return reinterpret_cast<TimeGetTimeFn>(::GetProcAddress(lib, "timeGetTime"));
     }();
 
-    static auto once = false;
-    if (!once)
-    {
-        static const auto *glString_addr = reinterpret_cast<std::uintptr_t *>(0x011733f0);
-        if (*glString_addr)
-        {
-            richterite::log("can hook glString");
-            once = true;
-        }
-    }
-
     return orig_func();
 }
 
 __declspec(dllexport) ::MMRESULT WINAPI timeBeginPeriod(::UINT uPeriod)
 {
-    static const auto *glString_addr = reinterpret_cast<std::uintptr_t *>(0x011733f0);
-    richterite::log("timeBeginPeriod {:x}", *glString_addr);
-
     static const auto orig_func = []
     {
         const auto lib = ::LoadLibraryA("C:\\Windows\\System32\\winmm.dll");
@@ -245,7 +228,7 @@ FARPROC WINAPI Hooked_GetProcAddress(HMODULE hModule, LPCSTR lpProcName)
 }
 
 // cobbled this together - ok for PoC
-void hook_iat()
+[[maybe_unused]] void hook_iat()
 {
     auto const h_exe = ::GetModuleHandleA(nullptr);
     if (!h_exe)
@@ -308,9 +291,8 @@ void hook_iat()
     if (fdwReason == DLL_PROCESS_ATTACH)
     {
         richterite::log("winmm.dll loaded");
-        hook_iat();
 
-        // patch();
+        patch();
     }
 
     return 1;
