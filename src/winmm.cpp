@@ -1,9 +1,14 @@
 #include <cstring>
+#include <ranges>
+#include <string_view>
+#include <unordered_map>
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
 #include <mmsystem.h>
+
+using namespace std::literals;
 
 #include "utils.h"
 
@@ -19,21 +24,68 @@ using TimeGetTimeFn = ::DWORD(WINAPI *)();
 using TimeBeginPeriodFn = ::MMRESULT(WINAPI *)(::UINT);
 using TimeEndPeriodFn = ::MMRESULT(WINAPI *)(::UINT);
 
-using glGetString_t = const unsigned char *(WINAPI *)(unsigned int name);
+using glGetString_t = const unsigned char *(WINAPI *)(unsigned int);
 using GetProcAddress_t = FARPROC(WINAPI *)(HMODULE, LPCSTR);
+using LoadLibrary_t = HMODULE(WINAPI *)(LPCSTR);
+using FreeLibrary_t = BOOL(WINAPI *)(HMODULE);
 
 namespace
 {
 
 glGetString_t Original_glGetString = nullptr;
 GetProcAddress_t Original_GetProcAddress = nullptr;
+LoadLibrary_t Original_LoadLibrary = nullptr;
+FreeLibrary_t Original_FreeLibrary = nullptr;
+std::unordered_map<std::string, void *> loaded_libraries;
 
-[[maybe_unused]] auto patch() -> void
+[[maybe_unused]] auto patch1() -> void
 {
     static auto *patch_addr = reinterpret_cast<void *>(0x0044793a);
     const auto auto_prot = richterite::AutoProtect{reinterpret_cast<void *>(patch_addr), 6, PAGE_EXECUTE_READWRITE};
 
     std::memset(patch_addr, 0x90, 6);
+
+    richterite::log("patch applied at {}", patch_addr);
+}
+
+[[maybe_unused]] auto patch2() -> void
+{
+    static auto *patch_addr = reinterpret_cast<void *>(0x00435fb0);
+
+    static const std::uint8_t patch_bytes[] = {
+        0xE8, 0xFB, 0xD5, 0xFD, 0xFF,                                     // CALL FUN_004135b0
+        0xA3, 0xE0, 0x42, 0xC0, 0x00,                                     // MOV [DAT_00c042e0], EAX
+        0x8B, 0x44, 0x24, 0x04,                                           // MOV EAX, dword ptr [ESP + 0x4]
+        0x50,                                                             // PUSH EAX
+        0xE8, 0x7C, 0x71, 0xFE, 0xFF,                                     // CALL FUN_0041d140
+        0x50,                                                             // PUSH EAX (Acts as Save & Arg 4)
+        0xA1, 0x44, 0x9E, 0xB9, 0x00,                                     // MOV EAX, [sv_maxclients]
+        0x33, 0xC9,                                                       // XOR ECX, ECX
+        0x8B, 0x50, 0x20,                                                 // MOV EDX, dword ptr [EAX + 0x20]
+        0x85, 0xD2,                                                       // TEST EDX, EDX
+        0x7E, 0x24,                                                       // JLE LAB_END_LOOP (+0x24)
+        0x33, 0xC0,                                                       // XOR EAX, EAX
+        0x8B, 0x15, 0x6C, 0x9E, 0xB9, 0x00,                               // MOV EDX, dword ptr [svs_clients]
+        0x41,                                                             // INC ECX
+        0xC7, 0x84, 0x10, 0x54, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // MOV [EAX + EDX*1 + 0x854], 0x0
+        0x8B, 0x15, 0x44, 0x9E, 0xB9, 0x00,                               // MOV EDX, dword ptr [sv_maxclients]
+        0x05, 0x80, 0xC8, 0x01, 0x00,                                     // ADD EAX, 0x1C880
+        0x3B, 0x4A, 0x20,                                                 // CMP ECX, dword ptr [EDX + 0x20]
+        0x7C, 0xDE,                                                       // JL LAB_LOOP_START (-0x22)
+        0x8B, 0x0D, 0x64, 0x9E, 0xB9, 0x00,                               // MOV ECX, dword ptr [svs.time]
+        0x8B, 0x15, 0x0C, 0x22, 0xA0, 0x00,                               // MOV EDX, dword ptr [DAT_00a0220c]
+        0x51,                                                             // PUSH ECX (Arg 3)
+        0x6A, 0x00,                                                       // PUSH 0x0 (Arg 2)
+        0x52,                                                             // PUSH EDX (Arg 1)
+        0xE8, 0x24, 0x85, 0x00, 0x00,                                     // CALL VM_Call (Recalculated offset)
+        0x83, 0xC4, 0x14,                                                 // ADD ESP, 0x14
+        0xC3                                                              // RET
+    };
+
+    const auto auto_prot =
+        richterite::AutoProtect{reinterpret_cast<void *>(patch_addr), sizeof(patch_bytes), PAGE_EXECUTE_READWRITE};
+
+    std::memcpy(patch_addr, patch_bytes, sizeof(patch_bytes));
 
     richterite::log("patch applied at {}", patch_addr);
 }
@@ -214,17 +266,46 @@ __declspec(dllexport) const unsigned char *WINAPI Hooked_glGetString(unsigned in
 
 FARPROC WINAPI Hooked_GetProcAddress(HMODULE hModule, LPCSTR lpProcName)
 {
-    if (HIWORD(lpProcName) != 0)
+    // if (HIWORD(lpProcName) != 0)
+    // {
+    //     if (::lstrcmpA(lpProcName, "glGetString") == 0)
+    //     {
+    //         richterite::log("hooked glGetString");
+    //         Original_glGetString = reinterpret_cast<glGetString_t>(Original_GetProcAddress(hModule, lpProcName));
+    //         return (FARPROC)&Hooked_glGetString;
+    //     }
+    // }
+    //
+    return Original_GetProcAddress(hModule, lpProcName);
+}
+
+::HMODULE WINAPI Hooked_LoadLibraryA(LPCSTR lpLibFileName)
+{
+    if (std::string_view{lpLibFileName} == "qagamex86.dll"sv)
     {
-        if (::lstrcmpA(lpProcName, "glGetString") == 0)
+        const auto old_addr = loaded_libraries.find("qagamex86.dll");
+        if (old_addr != std::ranges::cend(loaded_libraries))
         {
-            richterite::log("hooked glGetString");
-            Original_glGetString = reinterpret_cast<glGetString_t>(Original_GetProcAddress(hModule, lpProcName));
-            return (FARPROC)&Hooked_glGetString;
+            const auto fudge =
+                ::VirtualAlloc(old_addr->second, 0x6AB000, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE | PAGE_GUARD);
+            richterite::log("fudged in some memory: {} {} {}", fudge, old_addr->second, ::GetLastError());
         }
     }
 
-    return Original_GetProcAddress(hModule, lpProcName);
+    const auto module = Original_LoadLibrary(lpLibFileName);
+    loaded_libraries[lpLibFileName] = static_cast<void *>(module);
+
+    richterite::log("Loaded library: {} -> {}", lpLibFileName, static_cast<void *>(module));
+
+    return module;
+}
+
+::BOOL WINAPI Hooked_FreeLibrary(HMODULE hModule)
+{
+    const auto result = Original_FreeLibrary(hModule);
+    richterite::log("FreeLibrary called for module: {}", static_cast<void *>(hModule));
+
+    return result;
 }
 
 // cobbled this together - ok for PoC
@@ -269,16 +350,36 @@ FARPROC WINAPI Hooked_GetProcAddress(HMODULE hModule, LPCSTR lpProcName)
 
                     if (::lstrcmpA(reinterpret_cast<::LPCSTR>(import_by_name->Name), "GetProcAddress") == 0)
                     {
-                        Original_GetProcAddress = reinterpret_cast<GetProcAddress_t>(ft->u1.Function);
+                        const auto auto_prot = richterite::AutoProtect{
+                            reinterpret_cast<void *>(&ft->u1.Function), sizeof(::DWORD_PTR), PAGE_READWRITE};
 
-                        auto old_protect = ::DWORD{};
-                        ::VirtualProtect(&ft->u1.Function, sizeof(::DWORD_PTR), PAGE_READWRITE, &old_protect);
+                        Original_GetProcAddress = reinterpret_cast<GetProcAddress_t>(ft->u1.Function);
 
                         ft->u1.Function = reinterpret_cast<::DWORD_PTR>(&Hooked_GetProcAddress);
 
-                        ::VirtualProtect(&ft->u1.Function, sizeof(::DWORD_PTR), old_protect, &old_protect);
+                        richterite::log("GetProcAddress IAT hooked");
+                    }
+                    else if (::lstrcmpA(reinterpret_cast<::LPCSTR>(import_by_name->Name), "LoadLibraryA") == 0)
+                    {
+                        const auto auto_prot = richterite::AutoProtect{
+                            reinterpret_cast<void *>(&ft->u1.Function), sizeof(::DWORD_PTR), PAGE_READWRITE};
 
-                        return;
+                        Original_LoadLibrary = reinterpret_cast<LoadLibrary_t>(ft->u1.Function);
+
+                        ft->u1.Function = reinterpret_cast<::DWORD_PTR>(&Hooked_LoadLibraryA);
+
+                        richterite::log("LoadLibrary IAT hooked");
+                    }
+                    else if (::lstrcmpA(reinterpret_cast<::LPCSTR>(import_by_name->Name), "FreeLibrary") == 0)
+                    {
+                        const auto auto_prot = richterite::AutoProtect{
+                            reinterpret_cast<void *>(&ft->u1.Function), sizeof(::DWORD_PTR), PAGE_READWRITE};
+
+                        Original_FreeLibrary = reinterpret_cast<FreeLibrary_t>(ft->u1.Function);
+
+                        ft->u1.Function = reinterpret_cast<::DWORD_PTR>(&Hooked_FreeLibrary);
+
+                        richterite::log("FreeLibrary IAT hooked");
                     }
                 }
             }
@@ -292,7 +393,10 @@ FARPROC WINAPI Hooked_GetProcAddress(HMODULE hModule, LPCSTR lpProcName)
     {
         richterite::log("winmm.dll loaded");
 
-        patch();
+        hook_iat();
+
+        // patch();
+        patch2();
     }
 
     return 1;
