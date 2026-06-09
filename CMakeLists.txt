@@ -2,11 +2,10 @@ cmake_minimum_required(VERSION 3.22)
 
 project(
   richterite
-  VERSION "2026.5.11.0"
+  VERSION "2026.6.9.1"
   DESCRIPTION "fix for Return To Castle Wolfenstein (winmm.dll proxy)"
   LANGUAGES C CXX
 )
-
 
 set(CMAKE_SKIP_PACKAGE_ALL_DEPENDENCY ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
