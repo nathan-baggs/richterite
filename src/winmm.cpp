@@ -395,7 +395,7 @@ FARPROC WINAPI Hooked_GetProcAddress(HMODULE hModule, LPCSTR lpProcName)
 
         hook_iat();
 
-        // patch();
+        patch1();
         patch2();
     }
 
